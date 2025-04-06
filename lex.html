@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="ja">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>人事異動システム</title>
+        <!-- AWS SDK v2 -->
+        <script src="https://sdk.amazonaws.com/js/aws-sdk-2.1061.0.min.js"></script>
+        <style>
+            body {
+                font-family: "Helvetica Neue", Arial, sans-serif;
+                max-width: 800px;
+                margin: 0 auto;
+                padding: 20px;
+                background-color: #f5f5f5;
+                color: #333;
+            }
+
+            h1 {
+                color: #0066cc;
+                text-align: center;
+                margin-bottom: 20px;
+                border-bottom: 2px solid #ddd;
+                padding-bottom: 10px;
+            }
+
+            .chat-container {
+                display: flex;
+                flex-direction: column;
+                height: 1000px;
+                border-radius: 10px;
+                overflow: hidden;
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            }
+
+            .chat-messages {
+                flex: 1;
+                padding: 20px;
+                overflow-y: auto;
+                background: white;
+            }
+
+            .message {
+                margin-bottom: 15px;
+                max-width: 80%;
+                padding: 12px;
+                border-radius: 18px;
+            }
+
+            .user-message {
+                background-color: #e3f2fd;
+                margin-left: auto;
+                border-bottom-right-radius: 5px;
+            }
+
+            .bot-message {
+                background-color: #f1f1f1;
+                margin-right: auto;
+                border-bottom-left-radius: 5px;
+            }
+
+            .input-area {
+                display: flex;
+                padding: 15px;
+                background: white;
+                border-top: 1px solid #eee;
+            }
+
+            #message {
+                flex: 1;
+                padding: 12px 15px;
+                border: 1px solid #ddd;
+                border-radius: 25px;
+                outline: none;
+                font-size: 16px;
+            }
+
+            #message:focus {
+                border-color: #0066cc;
+            }
+
+            button {
+                background-color: #0066cc;
+                color: white;
+                border: none;
+                padding: 0 20px;
+                margin-left: 10px;
+                border-radius: 25px;
+                cursor: pointer;
+                font-size: 16px;
+                transition: background-color 0.2s;
+            }
+
+            button:hover {
+                background-color: #0055aa;
+            }
+
+            /* カード用のスタイル */
+            .card {
+                background-color: white;
+                border-radius: 8px;
+                box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+                margin-bottom: 15px;
+                max-width: 90%;
+                overflow: hidden;
+            }
+
+            .card-title {
+                background-color: #0066cc;
+                color: white;
+                padding: 10px 15px;
+                font-weight: bold;
+                font-size: 16px;
+            }
+
+            .card-subtitle {
+                padding: 8px 15px;
+                color: #666;
+                font-size: 14px;
+                border-bottom: 1px solid #eee;
+            }
+
+            .card-buttons {
+                display: flex;
+                flex-direction: column;
+                padding: 10px;
+            }
+
+            .card-button {
+                background-color: #f0f7ff;
+                border: 1px solid #0066cc;
+                color: #0066cc;
+                border-radius: 5px;
+                padding: 8px 12px;
+                margin: 5px 0;
+                cursor: pointer;
+                transition: all 0.2s;
+                text-align: center;
+            }
+
+            .card-button:hover {
+                background-color: #e3f2fd;
+            }
+
+            .card-image {
+                width: 100%;
+                height: auto;
+                max-height: 200px;
+                object-fit: cover;
+            }
+
+            #loading {
+                text-align: center;
+                padding: 20px;
+                font-style: italic;
+                color: #666;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>人事異動システム</h1>
+
+        <div class="chat-container">
+            <div id="chat-messages" class="chat-messages">
+                <div id="loading">接続中です。しばらくお待ちください...</div>
+            </div>
+            <div class="input-area">
+                <input
+                    type="text"
+                    id="message"
+                    placeholder="メッセージを入力してください"
+                    onkeypress="if(event.key === 'Enter') sendMessage()"
+                    disabled
+                />
+                <button onclick="sendMessage()" id="send-button" disabled>
+                    送信
+                </button>
+            </div>
+        </div>
+
+        <script>
+            // 必要な変数を定義
+            let lexClient;
+            const sessionId = "user-" + Date.now();
+            const region = "us-west-2"; // 使用するAWSリージョン
+
+            // Cognito IDプールを使用した認証設定
+            const identityPoolId =
+                "us-west-2:c3e7d6da-7268-48d7-9764-f5a5399f66e2"; // 実際のIDプールIDに置き換える
+
+            // AWS設定を初期化
+            AWS.config.region = region;
+            AWS.config.credentials = new AWS.CognitoIdentityCredentials({
+                IdentityPoolId: identityPoolId,
+            });
+
+            // 認証情報を取得
+            AWS.config.credentials.get(function (err) {
+                // ローディング表示を削除
+                document.getElementById("loading").style.display = "none";
+
+                if (err) {
+                    console.error("認証情報の取得に失敗しました:", err);
+                    addMessage(
+                        "認証に失敗しました。ページを再読み込みしてください。",
+                        false
+                    );
+                    return;
+                }
+
+                console.log("認証に成功しました");
+
+                // 入力欄を有効化
+                document.getElementById("message").disabled = false;
+                document.getElementById("send-button").disabled = false;
+
+                // Lexクライアントを初期化
+                lexClient = new AWS.LexRuntimeV2();
+
+                // 初期メッセージを表示
+                addMessage(
+                    "こんにちは！人事異動システムへようこそ。「人事異動」と入力して申請を開始してください。",
+                    false
+                );
+            });
+
+            // メッセージ追加関数
+            function addMessage(content, isUser) {
+                const messagesDiv = document.getElementById("chat-messages");
+
+                if (isUser) {
+                    // ユーザーメッセージ
+                    const messageDiv = document.createElement("div");
+                    messageDiv.className = "message user-message";
+                    messageDiv.textContent = content;
+                    messagesDiv.appendChild(messageDiv);
+                } else {
+                    // ボットメッセージ
+                    if (typeof content === "string") {
+                        // 通常のテキストメッセージ
+                        const messageDiv = document.createElement("div");
+                        messageDiv.className = "message bot-message";
+                        messageDiv.textContent = content;
+                        messagesDiv.appendChild(messageDiv);
+                    } else if (content.contentType === "ImageResponseCard") {
+                        // カード形式のメッセージ
+                        const card = content.imageResponseCard;
+                        const cardDiv = document.createElement("div");
+                        cardDiv.className = "message bot-message card";
+
+                        // カードのタイトル
+                        const titleDiv = document.createElement("div");
+                        titleDiv.className = "card-title";
+                        titleDiv.textContent = card.title;
+                        cardDiv.appendChild(titleDiv);
+
+                        // カードのサブタイトル（あれば）
+                        if (card.subtitle) {
+                            const subtitleDiv = document.createElement("div");
+                            subtitleDiv.className = "card-subtitle";
+                            subtitleDiv.textContent = card.subtitle;
+                            cardDiv.appendChild(subtitleDiv);
+                        }
+
+                        // カードの画像（あれば）
+                        if (card.imageUrl) {
+                            const image = document.createElement("img");
+                            image.className = "card-image";
+                            image.src = card.imageUrl;
+                            image.alt = card.title;
+                            cardDiv.appendChild(image);
+                        }
+
+                        // カードのボタン
+                        if (card.buttons && card.buttons.length > 0) {
+                            const buttonsDiv = document.createElement("div");
+                            buttonsDiv.className = "card-buttons";
+
+                            card.buttons.forEach((buttonData) => {
+                                const button = document.createElement("button");
+                                button.className = "card-button";
+                                button.textContent = buttonData.text;
+                                button.onclick = function () {
+                                    // ボタンがクリックされたときの処理
+                                    document.getElementById("message").value =
+                                        buttonData.value;
+                                    sendMessage();
+                                };
+                                buttonsDiv.appendChild(button);
+                            });
+
+                            cardDiv.appendChild(buttonsDiv);
+                        }
+
+                        messagesDiv.appendChild(cardDiv);
+                    }
+                }
+
+                // 最新のメッセージが見えるようにスクロール
+                messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            }
+
+            function sendMessage() {
+                // Lexクライアントがまだ初期化されていない場合
+                if (!lexClient) {
+                    addMessage(
+                        "まだ接続準備ができていません。しばらくお待ちください。",
+                        false
+                    );
+                    return;
+                }
+
+                const userInput = document.getElementById("message").value;
+                if (!userInput) return;
+
+                // ユーザーメッセージを表示
+                addMessage(userInput, true);
+
+                // 入力欄をクリア
+                document.getElementById("message").value = "";
+
+                // Lex V2のパラメータ
+                const params = {
+                    botId: "BFKTB5KYUK", // ボットID
+                    botAliasId: "TSTALIASID", // エイリアスID
+                    localeId: "ja_JP", // ロケールID
+                    sessionId: sessionId, // セッションID
+                    text: userInput,
+                };
+
+                // Lex V2のAPIを呼び出し
+                lexClient.recognizeText(params, function (err, data) {
+                    if (err) {
+                        console.error("Lexとの通信でエラーが発生:", err);
+                        addMessage(
+                            "エラーが発生しました: " + err.message,
+                            false
+                        );
+                    } else {
+                        console.log(data);
+
+                        // ボットからの応答メッセージを表示
+                        if (data.messages && data.messages.length > 0) {
+                            data.messages.forEach((msg) => {
+                                // メッセージタイプによって処理を分ける
+                                if (msg.contentType === "PlainText") {
+                                    addMessage(msg.content, false);
+                                } else if (
+                                    msg.contentType === "ImageResponseCard"
+                                ) {
+                                    addMessage(msg, false);
+                                } else {
+                                    // その他のコンテンツタイプ
+                                    addMessage(
+                                        `サポートされていないメッセージタイプ: ${msg.contentType}`,
+                                        false
+                                    );
+                                }
+                            });
+                        } else {
+                            addMessage("応答メッセージがありません。", false);
+                        }
+                    }
+                });
+            }
+        </script>
+    </body>
+</html>
