@@ -155,6 +155,67 @@
                 font-style: italic;
                 color: #666;
             }
+
+            /* 複数選択リスト用のスタイル */
+            .multi-select-container {
+                background-color: white;
+                border-radius: 8px;
+                box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+                margin-bottom: 15px;
+                max-width: 90%;
+                overflow: hidden;
+            }
+
+            .multi-select-title {
+                background-color: #0066cc;
+                color: white;
+                padding: 10px 15px;
+                font-weight: bold;
+                font-size: 16px;
+            }
+
+            .multi-select-options {
+                padding: 10px;
+                display: flex;
+                flex-direction: column;
+            }
+
+            .multi-select-option {
+                display: flex;
+                align-items: center;
+                margin: 5px 0;
+                padding: 8px;
+                border-radius: 5px;
+                transition: background-color 0.2s;
+            }
+
+            .multi-select-option:hover {
+                background-color: #f0f7ff;
+            }
+
+            .multi-select-option input[type="checkbox"] {
+                margin-right: 10px;
+            }
+
+            .multi-select-option-text {
+                font-size: 14px;
+            }
+
+            .multi-select-submit {
+                background-color: #0066cc;
+                color: white;
+                border: none;
+                padding: 8px 15px;
+                margin: 10px 0 5px 0;
+                border-radius: 5px;
+                cursor: pointer;
+                font-size: 14px;
+                align-self: flex-end;
+            }
+
+            .multi-select-submit:hover {
+                background-color: #0055aa;
+            }
         </style>
     </head>
     <body>
@@ -232,7 +293,18 @@
                     // ユーザーメッセージ
                     const messageDiv = document.createElement("div");
                     messageDiv.className = "message user-message";
-                    messageDiv.textContent = content;
+
+                    // 改行コードをHTMLの改行に変換（2つのパターンに対応）
+                    if (typeof content === "string") {
+                        // リテラルな改行と\nという文字列の両方を<br>に置換
+                        const processedContent = content
+                            .replace(/\\n/g, "<br>") // \n という文字列を <br> に変換
+                            .replace(/\n/g, "<br>"); // 実際の改行コードを <br> に変換
+                        messageDiv.innerHTML = processedContent;
+                    } else {
+                        messageDiv.textContent = content;
+                    }
+
                     messagesDiv.appendChild(messageDiv);
                 } else {
                     // ボットメッセージ
@@ -240,7 +312,13 @@
                         // 通常のテキストメッセージ
                         const messageDiv = document.createElement("div");
                         messageDiv.className = "message bot-message";
-                        messageDiv.textContent = content;
+
+                        // 改行コードをHTMLの改行に変換（2つのパターンに対応）
+                        const processedContent = content
+                            .replace(/\\n/g, "<br>") // \n という文字列を <br> に変換
+                            .replace(/\n/g, "<br>"); // 実際の改行コードを <br> に変換
+                        messageDiv.innerHTML = processedContent;
+
                         messagesDiv.appendChild(messageDiv);
                     } else if (content.contentType === "ImageResponseCard") {
                         // カード形式のメッセージ
@@ -293,6 +371,99 @@
                         }
 
                         messagesDiv.appendChild(cardDiv);
+                    } else if (
+                        content.messageType === "custom" &&
+                        content.customContent?.type === "multiSelectionList"
+                    ) {
+                        // 複数選択リストを処理
+                        const multiSelect = content.customContent;
+                        const containerDiv = document.createElement("div");
+                        containerDiv.className =
+                            "message bot-message multi-select-container";
+
+                        // タイトル
+                        const titleDiv = document.createElement("div");
+                        titleDiv.className = "multi-select-title";
+                        titleDiv.textContent = multiSelect.title;
+                        containerDiv.appendChild(titleDiv);
+
+                        // オプションのコンテナ
+                        const optionsDiv = document.createElement("div");
+                        optionsDiv.className = "multi-select-options";
+
+                        // 選択状態を追跡する配列
+                        const selectedOptions = [];
+                        const selectedTexts = [];
+
+                        // オプションを追加
+                        multiSelect.options.forEach((option, index) => {
+                            const optionDiv = document.createElement("div");
+                            optionDiv.className = "multi-select-option";
+
+                            // チェックボックス
+                            const checkbox = document.createElement("input");
+                            checkbox.type = "checkbox";
+                            checkbox.id = `option-${index}`;
+                            checkbox.value = option.value;
+                            checkbox.addEventListener("change", function () {
+                                if (this.checked) {
+                                    selectedOptions.push(option.value);
+                                    selectedTexts.push(option.text);
+                                } else {
+                                    const idx = selectedOptions.indexOf(
+                                        option.value
+                                    );
+                                    if (idx > -1) {
+                                        selectedOptions.splice(idx, 1);
+                                        selectedTexts.splice(idx, 1);
+                                    }
+                                }
+                            });
+
+                            // ラベル
+                            const label = document.createElement("label");
+                            label.htmlFor = `option-${index}`;
+                            label.className = "multi-select-option-text";
+                            label.textContent = option.text;
+
+                            optionDiv.appendChild(checkbox);
+                            optionDiv.appendChild(label);
+                            optionsDiv.appendChild(optionDiv);
+                        });
+
+                        // 送信ボタン
+                        const submitButton = document.createElement("button");
+                        submitButton.className = "multi-select-submit";
+                        submitButton.textContent = "選択を送信";
+                        submitButton.onclick = function () {
+                            if (selectedOptions.length > 0) {
+                                // 選択されたオプションをコンマ区切りの文字列として表示
+                                const userMessage = selectedTexts.join(", ");
+
+                                // ユーザーメッセージとして表示
+                                addMessage(userMessage, true);
+
+                                // Lexに送信するJSONデータを作成
+                                const jsonData = JSON.stringify({
+                                    selectedOptions: selectedOptions,
+                                });
+
+                                // 入力欄に設定（ユーザーには見えない）
+                                document.getElementById("message").value =
+                                    jsonData;
+
+                                // この段階では表示せずに直接Lexに送信
+                                sendMessageWithoutDisplay();
+                            } else {
+                                alert(
+                                    "少なくとも1つのオプションを選択してください"
+                                );
+                            }
+                        };
+
+                        optionsDiv.appendChild(submitButton);
+                        containerDiv.appendChild(optionsDiv);
+                        messagesDiv.appendChild(containerDiv);
                     }
                 }
 
@@ -300,7 +471,8 @@
                 messagesDiv.scrollTop = messagesDiv.scrollHeight;
             }
 
-            function sendMessage() {
+            // 新しい関数を追加：表示せずにメッセージを送信する
+            function sendMessageWithoutDisplay() {
                 // Lexクライアントがまだ初期化されていない場合
                 if (!lexClient) {
                     addMessage(
@@ -313,18 +485,15 @@
                 const userInput = document.getElementById("message").value;
                 if (!userInput) return;
 
-                // ユーザーメッセージを表示
-                addMessage(userInput, true);
-
                 // 入力欄をクリア
                 document.getElementById("message").value = "";
 
                 // Lex V2のパラメータ
                 const params = {
-                    botId: "BFKTB5KYUK", // ボットID
-                    botAliasId: "TSTALIASID", // エイリアスID
-                    localeId: "ja_JP", // ロケールID
-                    sessionId: sessionId, // セッションID
+                    botId: "BFKTB5KYUK",
+                    botAliasId: "TSTALIASID",
+                    localeId: "ja_JP",
+                    sessionId: sessionId,
                     text: userInput,
                 };
 
@@ -349,6 +518,113 @@
                                     msg.contentType === "ImageResponseCard"
                                 ) {
                                     addMessage(msg, false);
+                                } else if (
+                                    msg.contentType === "CustomPayload"
+                                ) {
+                                    // カスタムペイロードの処理
+                                    try {
+                                        const customPayload = JSON.parse(
+                                            msg.content
+                                        );
+                                        addMessage(customPayload, false);
+                                    } catch (e) {
+                                        console.error(
+                                            "カスタムペイロードの解析に失敗しました:",
+                                            e
+                                        );
+                                        addMessage(
+                                            "応答の処理でエラーが発生しました。",
+                                            false
+                                        );
+                                    }
+                                } else {
+                                    // その他のコンテンツタイプ
+                                    addMessage(
+                                        `サポートされていないメッセージタイプ: ${msg.contentType}`,
+                                        false
+                                    );
+                                }
+                            });
+                        } else {
+                            addMessage("応答メッセージがありません。", false);
+                        }
+                    }
+                });
+            }
+
+            // sendMessage 関数を追加または修正
+            function sendMessage() {
+                // Lexクライアントがまだ初期化されていない場合
+                if (!lexClient) {
+                    addMessage(
+                        "まだ接続準備ができていません。しばらくお待ちください。",
+                        false
+                    );
+                    return;
+                }
+
+                const userInput = document.getElementById("message").value;
+                if (!userInput) return;
+
+                // ユーザーメッセージを表示（JSONオブジェクトなら表示しない）
+                if (!userInput.startsWith("{")) {
+                    // 改行文字列を実際の改行に変換してからaddMessageに渡す
+                    const processedInput = userInput.replace(/\\n/g, "\n");
+                    addMessage(processedInput, true);
+                }
+
+                // 入力欄をクリア
+                document.getElementById("message").value = "";
+
+                // Lex V2のパラメータ
+                const params = {
+                    botId: "BFKTB5KYUK",
+                    botAliasId: "TSTALIASID",
+                    localeId: "ja_JP",
+                    sessionId: sessionId,
+                    text: userInput,
+                };
+
+                // Lex V2のAPIを呼び出し
+                lexClient.recognizeText(params, function (err, data) {
+                    if (err) {
+                        console.error("Lexとの通信でエラーが発生:", err);
+                        addMessage(
+                            "エラーが発生しました: " + err.message,
+                            false
+                        );
+                    } else {
+                        console.log(data);
+
+                        // ボットからの応答メッセージを表示
+                        if (data.messages && data.messages.length > 0) {
+                            data.messages.forEach((msg) => {
+                                // メッセージタイプによって処理を分ける
+                                if (msg.contentType === "PlainText") {
+                                    addMessage(msg.content, false);
+                                } else if (
+                                    msg.contentType === "ImageResponseCard"
+                                ) {
+                                    addMessage(msg, false);
+                                } else if (
+                                    msg.contentType === "CustomPayload"
+                                ) {
+                                    // カスタムペイロードの処理
+                                    try {
+                                        const customPayload = JSON.parse(
+                                            msg.content
+                                        );
+                                        addMessage(customPayload, false);
+                                    } catch (e) {
+                                        console.error(
+                                            "カスタムペイロードの解析に失敗しました:",
+                                            e
+                                        );
+                                        addMessage(
+                                            "応答の処理でエラーが発生しました。",
+                                            false
+                                        );
+                                    }
                                 } else {
                                     // その他のコンテンツタイプ
                                     addMessage(
