@@ -36,8 +36,8 @@ def lambda_handler(event, context):
     # Teams用の承認メッセージを作成
     teams_message = create_teams_approval_message(mail_subject, sender_email, mail_body, draft_link)
     
-    # SNSトピックに送信
-    send_to_sns(teams_message)
+    # SESでメール送信
+    send_email_with_ses(teams_message)
     
     return {
         'statusCode': 200,
@@ -82,47 +82,91 @@ def create_teams_approval_message(subject, from_addr, body, draft_link):
         "承認メール作成": f"以下のリンクをクリックして承認メールを作成してください: {draft_link}"
     }
 
-def send_to_sns(message):
-    """SNSにメッセージを送信する"""
-    sns = boto3.client('sns')
-    sns_topic_arn = os.environ.get('SNS_TOPIC_ARN')
-    
-    # リンクをより認識されやすい形式に変更
-    mailto_link = message['承認メール作成'].split(': ')[1]
-    
-    # テキスト形式のメッセージを作成（URLをそのまま表示）
-    formatted_message = f"""
-申請システム: {message['申請システム']}
-申請者アドレス: {message['申請者アドレス']}
-申請内容: {message['申請内容']}
-
-■ 以下のURLをコピーしてブラウザに貼り付けると承認メールが作成されます ■
-{mailto_link}
-    """
-    
-    try:
-        response = sns.publish(
-            TopicArn=sns_topic_arn,
-            Message=formatted_message,
-            Subject='Teams承認通知'
-        )
-        return response
-    except Exception as e:
-        print(f"SNS送信エラー: {str(e)}")
-        raise e
-
-def create_mailto_link(subject):
-    """シンプルな形式のメール下書きリンクを作成する"""
+def create_mailto_link(json_data):
+    """JSON形式のデータを使ってメール下書きリンクを作成する"""
     to = os.environ.get('GET_LOG_EMAIL_ADDRESS')
     
-    # JSONではなくシンプルなテキストタイトル
-    simple_subject = "承認リクエスト"
+    # JSON文字列をパースして必要なデータを取得
+    data = json.loads(json_data)
+    
+    # タイトルにシステム名を設定
+    subject = f"ログ取得API実行: {data['system']}"
+    
+    # ボディに申請者と理由をJSON形式で含める - 英語のキーに統一
+    body_json = {
+        "mail": data['mail'],
+        "content": data['content'],
+        "system": data['system']
+    }
+    
+    # JSON文字列をボディに設定
+    body = json.dumps(body_json, ensure_ascii=False)
     
     params = {
-        'subject': simple_subject,
+        'subject': subject,
+        'body': body
     }
     
     query_string = urllib.parse.urlencode(params)
     mailto_link = f"mailto:{to}?{query_string}"
     
     return mailto_link
+
+def send_email_with_ses(message):
+    """SESを使ってシンプルなHTML形式のメールを送信する"""
+    ses = boto3.client('ses')
+    
+    # リンクを取得
+    mailto_link = message['承認メール作成'].split(': ')[1]
+    
+    # 送信先メールアドレス（環境変数から取得）
+    recipient = os.environ.get('TEAMS_NOTIFICATION_EMAIL')
+    
+    # シンプルなHTML形式のメール本文を作成
+    html_body = f"""
+    <html>
+    <body>
+        <p>申請システム: {message['申請システム']}</p>
+        <p>申請者アドレス: {message['申請者アドレス']}</p>
+        <p>申請内容: {message['申請内容'].replace('\\n', '<br>')}</p>
+        <p>承認メール作成: <a href="{mailto_link}">承認メールを作成する</a></p>
+        <p>※承認する場合は、開いた下書きメールをそのまま送信してください。</p>
+    </body>
+    </html>
+    """
+    
+    # プレーンテキスト版
+    text_body = f"""
+        申請システム: {message['申請システム']}
+        申請者アドレス: {message['申請者アドレス']}
+        申請内容: {message['申請内容']}
+
+        承認メール作成: {mailto_link}
+        
+        ※承認する場合は、開いた下書きメールをそのまま送信してください。
+    """
+    
+    try:
+        response = ses.send_email(
+            Source=os.environ.get('FROM_EMAIL_ADDRESS'),
+            Destination={
+                'ToAddresses': [recipient]
+            },
+            Message={
+                'Subject': {
+                    'Data': "ログ取得API承認依頼"
+                },
+                'Body': {
+                    'Text': {
+                        'Data': text_body
+                    },
+                    'Html': {
+                        'Data': html_body
+                    }
+                }
+            }
+        )
+        return response
+    except Exception as e:
+        print(f"SES送信エラー: {str(e)}")
+        raise e
